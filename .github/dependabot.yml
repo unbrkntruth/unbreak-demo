@@ -1,0 +1,13 @@
+# Dependabot on the demo: `express` only, one PR at a time, so the repository produces exactly
+# the Express 4 -> 5 bump that Unbreak's express-4-to-5 skill covers. The PR is never merged; the
+# app must stay on Express 4 so the next bump can be watched too. It is closed after each run and
+# recreated with `@dependabot recreate`.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    allow:
+      - dependency-name: express

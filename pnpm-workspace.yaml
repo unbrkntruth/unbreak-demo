@@ -1,0 +1,4 @@
+# Stand-alone project. This file stops pnpm from treating the Unbreak repo above as this project's workspace.
+packages: []
+allowBuilds:
+  esbuild: true
