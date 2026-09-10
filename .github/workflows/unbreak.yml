@@ -3,7 +3,8 @@
 # on your default branch. The Unbreak GitHub App dispatches it when someone with
 # write access presses "Unbreak this" on a red Dependabot or Renovate PR.
 #
-# What runs here is the public npm package @unbrkn/agent. Read it.
+# What runs here is the @unbrkn/agent package, downloaded below and checked
+# against a pinned SHA-256, source included. Read it. Nothing else runs.
 # Nothing in this job talks to Unbreak's servers except two calls with this
 # job's OIDC token: one to fetch a repo-scoped App token (so the fix can be
 # pushed and CI re-runs), one to post report.json at the end.
