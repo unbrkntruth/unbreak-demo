@@ -13,9 +13,9 @@ The PR is never merged, so the app stays on Express 4 and the next bump can be w
 
 **Runs on the record**
 
-| PR | Result | Check run |
+| PR | Result | Links |
 |---|---|---|
-| _first run pending_ | | |
+| [#1](https://github.com/unbrkntruth/unbreak-demo/pull/1) express 4.19.2 → 5.2.1 | Fixed: CI green, 0 regressions (18/18 before and after), $0.18 of API usage, 10 turns, 52 s | [check run](https://github.com/unbrkntruth/unbreak-demo/runs/102988662367) · [full report](https://github.com/unbrkntruth/unbreak-demo/actions/runs/34512161903) · fix commit [`11df61d`](https://github.com/unbrkntruth/unbreak-demo/commit/11df61d830f7f86c9da24de71cf76dc1bdff8c1e) |
 
 **What is in the code that breaks on Express 5**
 
