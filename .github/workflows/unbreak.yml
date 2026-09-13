@@ -157,38 +157,49 @@ jobs:
           elif [ -f head/.nvmrc ]; then echo "version=$(cat head/.nvmrc)" >> "$GITHUB_OUTPUT"
           else echo "version=22" >> "$GITHUB_OUTPUT"; fi
 
-      - name: pnpm version (packageManager in the project, then the repo root, then engines.pnpm, then latest)
-        id: pnpm_version
+      - name: Package manager (from the project's lockfile, then the repo root; npm when there is none)
+        id: pm
         env:
           HEAD_DIR: ${{ steps.dirs.outputs.head }}
         run: |
-          source "$TRACE" pnpm_version
+          source "$TRACE" pm
           set -euo pipefail
-          # pnpm/action-setup refuses to guess when the project's package.json has no
-          # packageManager field (the case for most customer projects, and for a
-          # sub-directory in a monorepo), so the version is resolved here and pnpm is
-          # installed with npm below.
-          VERSION=$(node -e '
-            const fs = require("fs");
-            const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return {}; } };
-            const pm = (m) => typeof m.packageManager === "string" && m.packageManager.startsWith("pnpm@") ? m.packageManager.slice(5).split("+")[0] : null;
-            const project = read(process.argv[1] + "/package.json");
-            const root = read("head/package.json");
-            const engines = (m) => (m.engines && typeof m.engines.pnpm === "string" ? m.engines.pnpm : null);
-            console.log(pm(project) || pm(root) || engines(project) || engines(root) || "latest");
-          ' "$HEAD_DIR")
-          echo "pnpm@$VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # The customer's package manager is whatever their lockfile says; the install and test commands follow it.
+          # pnpm's version comes from packageManager or engines.pnpm (pnpm/action-setup refuses to guess); npm and yarn ship with Node.
+          PM=npm; INSTALL="npm install"; TEST="npm test"
+          for d in "$HEAD_DIR" head; do
+            if [ -f "$d/pnpm-lock.yaml" ]; then PM=pnpm; INSTALL="pnpm install --frozen-lockfile"; TEST="pnpm test"; break; fi
+            if [ -f "$d/yarn.lock" ]; then PM=yarn; if [ -f "$d/.yarnrc.yml" ]; then INSTALL="yarn install --immutable"; else INSTALL="yarn install --frozen-lockfile"; fi; TEST="yarn test"; break; fi
+            if [ -f "$d/package-lock.json" ]; then PM=npm; INSTALL="npm ci"; TEST="npm test"; break; fi
+          done
+          PNPM_VERSION=""
+          if [ "$PM" = pnpm ]; then
+            PNPM_VERSION=$(node -e '
+              const fs = require("fs");
+              const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return {}; } };
+              const pm = (m) => typeof m.packageManager === "string" && m.packageManager.startsWith("pnpm@") ? m.packageManager.slice(5).split("+")[0] : null;
+              const project = read(process.argv[1] + "/package.json");
+              const root = read("head/package.json");
+              const engines = (m) => (m.engines && typeof m.engines.pnpm === "string" ? m.engines.pnpm : null);
+              console.log(pm(project) || pm(root) || engines(project) || engines(root) || "latest");
+            ' "$HEAD_DIR")
+          fi
+          echo "$PM (install: $INSTALL; test: $TEST${PNPM_VERSION:+; pnpm@$PNPM_VERSION})"
+          echo "pm=$PM" >> "$GITHUB_OUTPUT"
+          echo "install_cmd=$INSTALL" >> "$GITHUB_OUTPUT"
+          echo "test_cmd=$TEST" >> "$GITHUB_OUTPUT"
+          echo "pnpm_version=$PNPM_VERSION" >> "$GITHUB_OUTPUT"
 
       - id: setup_node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ steps.node.outputs.version }}
 
-      - name: Install pnpm
+      - name: Install pnpm (only when the project uses it)
         id: pnpm
+        if: steps.pm.outputs.pm == 'pnpm'
         env:
-          PNPM_VERSION: ${{ steps.pnpm_version.outputs.version }}
+          PNPM_VERSION: ${{ steps.pm.outputs.pnpm_version }}
         run: |
           source "$TRACE" pnpm
           set -euo pipefail
@@ -197,6 +208,7 @@ jobs:
 
       - name: pnpm store path
         id: pnpm_store
+        if: steps.pm.outputs.pm == 'pnpm'
         run: |
           source "$TRACE" pnpm_store
           set -euo pipefail
@@ -204,6 +216,7 @@ jobs:
 
       - name: pnpm store cache (keyed on the lockfile)
         id: cache
+        if: steps.pm.outputs.pm == 'pnpm'
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.store }}
@@ -211,16 +224,23 @@ jobs:
           restore-keys: |
             unbreak-pnpm-${{ runner.os }}-
 
-      - name: Install (base and head)
+      - name: Install (base must install; a head that does not is the failure the agent fixes)
         id: install
         env:
           HEAD_DIR: ${{ steps.dirs.outputs.head }}
           BASE_DIR: ${{ steps.dirs.outputs.base }}
+          INSTALL_CMD: ${{ steps.pm.outputs.install_cmd }}
         run: |
           source "$TRACE" install
           set -euo pipefail
-          pnpm --dir "$BASE_DIR" install --frozen-lockfile
-          pnpm --dir "$HEAD_DIR" install --frozen-lockfile
+          (cd "$BASE_DIR" && $INSTALL_CMD)
+          # The peer-conflict lane: an ERESOLVE (or unmet peer) on the head is what most red Dependabot PRs are.
+          # Its output goes to a file the agent reads; the agent installs again after its fix.
+          if ! (cd "$HEAD_DIR" && $INSTALL_CMD 2>&1 | tee "$RUNNER_TEMP/unbreak-head-install.log"; test "${PIPESTATUS[0]}" -eq 0); then
+            echo "head install failed; the agent takes it from here (log: $RUNNER_TEMP/unbreak-head-install.log)"
+          else
+            rm -f "$RUNNER_TEMP/unbreak-head-install.log"
+          fi
 
       - name: Anthropic credentials (identity federation preferred, API key fallback)
         id: anthropic
@@ -281,8 +301,8 @@ jobs:
         env:
           # The agent is Apache-2.0 and public; the pin is what makes "what ran" provable.
           # Override both with repository variables to move to a newer release.
-          AGENT_URL: ${{ vars.UNBREAK_AGENT_URL || format('{0}/releases/unbrkn-agent-0.1.3.tgz', inputs.api_url) }}
-          AGENT_SHA256: ${{ vars.UNBREAK_AGENT_SHA256 || '9fdfca73c1968cc397dff9ca4315c26eaf842a4a1c680630c0417ca89081cd5e' }}
+          AGENT_URL: ${{ vars.UNBREAK_AGENT_URL || format('{0}/releases/unbrkn-agent-0.1.4.tgz', inputs.api_url) }}
+          AGENT_SHA256: ${{ vars.UNBREAK_AGENT_SHA256 || '66ee4ce56f682b933531a3e15736c90766bf0d3aae3231e23c652bd4ada31e4a' }}
         run: |
           source "$TRACE" agent_fetch
           set -euo pipefail
@@ -299,12 +319,16 @@ jobs:
           BASE_DIR: ${{ steps.dirs.outputs.base }}
           UNBREAK_API_URL: ${{ inputs.api_url }}
           UNBREAK_RUN_TOKEN: ${{ steps.app.outputs.run_token }}
+          INSTALL_CMD: ${{ steps.pm.outputs.install_cmd }}
+          TEST_CMD: ${{ steps.pm.outputs.test_cmd }}
         run: |
           source "$TRACE" agent
           set -uo pipefail
           # The agent writes report.json on every exit, a crash included (outcome infra_error, the error inside).
+          # unbreak.json test_command still wins over the package manager's default inside the agent.
           ./agent/node_modules/.bin/unbreak-agent run \
             --repo "$HEAD_DIR" --baseline "$BASE_DIR" \
+            --install-cmd "$INSTALL_CMD" --test-cmd "$TEST_CMD" --head-install-log "$RUNNER_TEMP/unbreak-head-install.log" \
             --slug "$GITHUB_REPOSITORY" --pr "$PR" --sha "$SHA" --base-sha "$BASE_SHA" \
             --out report.json --transcript transcript.md --apply --quiet > /dev/null
           echo "exit=$?" >> "$GITHUB_OUTPUT"
@@ -363,7 +387,7 @@ jobs:
           STEP_NAMES: >-
             {"trace":"Step log","app":"Get a repo-scoped Unbreak App token","pr":"Look up the PR",
              "checkout_head":"Check out the PR head","checkout_base":"Check out the base",
-             "dirs":"Project directories","node":"Node version","pnpm_version":"pnpm version",
+             "dirs":"Project directories","node":"Node version","pm":"Package manager",
              "setup_node":"Set up Node","pnpm":"Install pnpm","pnpm_store":"pnpm store path",
              "cache":"pnpm store cache","install":"Install (base and head)","anthropic":"Anthropic credentials",
              "agent_fetch":"Fetch the pinned Unbreak agent","agent":"Run the Unbreak agent",
