@@ -301,8 +301,8 @@ jobs:
         env:
           # The agent is Apache-2.0 and public; the pin is what makes "what ran" provable.
           # Override both with repository variables to move to a newer release.
-          AGENT_URL: ${{ vars.UNBREAK_AGENT_URL || format('{0}/releases/unbrkn-agent-0.1.6.tgz', inputs.api_url) }}
-          AGENT_SHA256: ${{ vars.UNBREAK_AGENT_SHA256 || '501912870876c6f136c31abd8269684dec07f0657e287b54361c6091abff34df' }}
+          AGENT_URL: ${{ vars.UNBREAK_AGENT_URL || format('{0}/releases/unbrkn-agent-0.1.7.tgz', inputs.api_url) }}
+          AGENT_SHA256: ${{ vars.UNBREAK_AGENT_SHA256 || 'a996240c181d96c5bda17328bacc767bcc4afca2f2e36120b873b7e4ea0dda93' }}
         run: |
           source "$TRACE" agent_fetch
           set -euo pipefail
