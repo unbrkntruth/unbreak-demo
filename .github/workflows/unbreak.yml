@@ -301,8 +301,8 @@ jobs:
         env:
           # The agent is Apache-2.0 and public; the pin is what makes "what ran" provable.
           # Override both with repository variables to move to a newer release.
-          AGENT_URL: ${{ vars.UNBREAK_AGENT_URL || format('{0}/releases/unbrkn-agent-0.1.7.tgz', inputs.api_url) }}
-          AGENT_SHA256: ${{ vars.UNBREAK_AGENT_SHA256 || 'a996240c181d96c5bda17328bacc767bcc4afca2f2e36120b873b7e4ea0dda93' }}
+          AGENT_URL: ${{ vars.UNBREAK_AGENT_URL || format('{0}/releases/unbrkn-agent-0.1.8.tgz', inputs.api_url) }}
+          AGENT_SHA256: ${{ vars.UNBREAK_AGENT_SHA256 || 'b81e19ac00399239926f3fe3a3c9c11415d3af71873995683be10a85fdb78ae4' }}
         run: |
           source "$TRACE" agent_fetch
           set -euo pipefail
@@ -324,7 +324,9 @@ jobs:
         run: |
           source "$TRACE" agent
           set -uo pipefail
-          # The agent writes report.json on every exit, a crash included (outcome infra_error, the error inside).
+          # The agent writes report.json on every exit, a crash included (outcome infra_error, the error inside),
+          # and receipt.json beside it (architecture §6.4): one signed statement about the gated action, which
+          # for us is the press that started this run. Both are uploaded below.
           # unbreak.json test_command still wins over the package manager's default inside the agent.
           ./agent/node_modules/.bin/unbreak-agent run \
             --repo "$HEAD_DIR" --baseline "$BASE_DIR" \
@@ -339,7 +341,7 @@ jobs:
             jq -r '"Unbreak: \(.outcome), billable=\(.billable), regressions=\(.regressions | length), cost=$\(.cost.usd)" + (if .error then "\n\n```\n" + .error + "\n```" else "" end)' report.json >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload report.json, the transcript and the step log
+      - name: Upload report.json, receipt.json, the transcript and the step log
         id: upload
         if: always()
         uses: actions/upload-artifact@v4
@@ -347,6 +349,7 @@ jobs:
           name: unbreak-report-${{ inputs.sha }}
           path: |
             report.json
+            receipt.json
             transcript.md
             ${{ runner.temp }}/unbreak-steps.log
           if-no-files-found: ignore
