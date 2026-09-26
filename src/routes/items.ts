@@ -4,19 +4,24 @@ import type { InMemoryStore, ItemStatus } from "../store.js";
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 
+interface Pagination {
+  page: number;
+  limit: number;
+}
+
 /**
- * Normalises pagination params in place so downstream handlers can trust them.
- * Relies on req.query being a plain, mutable object.
+ * Normalises pagination params so downstream handlers can trust them.
+ * req.query is a getter in Express 5, so the normalised values are published
+ * on res.locals instead of being written back into req.query.
  */
-function paginate(req: Request, _res: Response, next: NextFunction): void {
+function paginate(req: Request, res: Response, next: NextFunction): void {
   const rawPage = Number.parseInt(String(req.query.page ?? "1"), 10);
   const rawLimit = Number.parseInt(String(req.query.limit ?? String(DEFAULT_LIMIT)), 10);
 
   const page = Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
   const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? DEFAULT_LIMIT : Math.min(rawLimit, MAX_LIMIT);
 
-  req.query.page = String(page);
-  req.query.limit = String(limit);
+  res.locals.pagination = { page, limit } satisfies Pagination;
   next();
 }
 
@@ -31,8 +36,7 @@ export function createItemsRouter(store: InMemoryStore): Router {
 
   // GET /items?page=&limit=&filter[status]=
   router.get("/items", (req, res) => {
-    const page = Number(req.query.page);
-    const limit = Number(req.query.limit);
+    const { page, limit } = res.locals.pagination as Pagination;
 
     let items = store.listItems();
 
